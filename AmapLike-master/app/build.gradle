@@ -37,4 +37,7 @@ dependencies {
     compile 'com.amap.api:3dmap:latest.integration'
     compile 'com.amap.api:location:latest.integration'
     compile 'com.amap.api:search:latest.integration'
+
+    implementation 'com.alibaba:fastjson:1.2.80'
+    implementation 'com.squareup.okhttp3:okhttp:4.4.1'
 }

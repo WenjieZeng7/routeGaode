@@ -32,6 +32,7 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.alibaba.fastjson.JSON;
 import com.amap.api.maps.AMap;
 import com.amap.api.maps.AMapOptions;
 import com.amap.api.maps.CameraUpdate;
@@ -85,6 +86,11 @@ import java.util.List;
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.OnClick;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 /**
  * created by czh on 2018/1/4
@@ -609,7 +615,36 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                 if (mEndPoi==null){
                     return;
                 }
-                System.out.println(path); // 在用户点击【开始导航】后才发送最终确定的路径详细信息。
+                // 在用户点击【开始导航】后才发送最终确定的路径详细信息。
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        //发送可能会失败
+                        try{
+                            //上传
+                            String json = JSON.toJSONString(path); //使用阿里的fastJson库
+                            OkHttpClient client = new OkHttpClient(); //创建http客户端
+                            Request request = new Request.Builder().url("http://10.181.231.205:9090/drivepath/uploaddrivepath")
+                                    .post(RequestBody.create(MediaType.parse("application/json"),json)).build(); //创造http请求
+                            Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
+                            //操作成功，弹窗提示
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(RoutePlanActivity.this,"路径上传成功",Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }catch (Exception e){
+                            e.printStackTrace();
+                            runOnUiThread(new Runnable() { //UI操作必须要在主线程中，所以弹出操作要在runOnUiThread()中进行
+                                @Override
+                                public void run() {
+                                    Toast.makeText(RoutePlanActivity.this,"路径上传失败",Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
+                    }
+                }).start();
                 new NaviDialog().showView(mContext,mStartPoi,mEndPoi,mSelectedType);
                 break;
             case R.id.path_layout:
