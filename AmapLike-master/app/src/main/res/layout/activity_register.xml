@@ -17,7 +17,7 @@
         <TextView
             android:layout_height="wrap_content"
             android:layout_width="wrap_content"
-            android:text="账号："
+            android:text="账&#12288;&#12288;号："
             android:textSize="@dimen/font24"
              />
         <EditText
@@ -41,7 +41,7 @@
         <TextView
             android:layout_height="wrap_content"
             android:layout_width="wrap_content"
-            android:text="密码："
+            android:text="密&#12288;&#12288;码："
             android:textSize="@dimen/font24"
             />
         <EditText
@@ -56,28 +56,42 @@
             />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="@dimen/font24"
+        android:layout_marginRight="@dimen/font24"
+        android:orientation="horizontal"
+        android:layout_marginTop="@dimen/font24"
+        android:gravity="center_vertical">
+        <TextView
+            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:text="确认密码："
+            android:textSize="@dimen/font24"
+            />
+        <EditText
+            android:id="@+id/et_password2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="再次输入密码"
+            android:textSize="@dimen/font24"
+            android:background="@drawable/shape_bg_drive_general"
+            android:paddingLeft="@dimen/font10"
+            android:inputType="numberPassword"
+            />
+    </LinearLayout>
+
 
     <Button
-        android:id="@+id/btn_login"
+        android:id="@+id/btn_register"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/font24"
         android:layout_marginLeft="@dimen/font24"
         android:layout_marginRight="@dimen/font24"
-        android:text="登录"
+        android:text="注册"
         android:textSize="@dimen/font24"
         android:background="@drawable/selector_btn_theme"/>
-
-    <TextView
-        android:id="@+id/tv_register"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginRight="@dimen/font24"
-        android:layout_marginTop="@dimen/font10"
-        android:layout_gravity="right"
-        android:text="还没有账号？点击注册"
-        android:clickable="true"
-        android:onClick="onClick"
-        />
 
 </LinearLayout>

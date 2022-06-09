@@ -35,7 +35,7 @@ dependencies {
     compile 'com.romandanylyk:pageindicatorview:1.0.0@aar'
 
     compile 'com.amap.api:3dmap:latest.integration'
-    compile 'com.amap.api:location:latest.integration'
+//    compile 'com.amap.api:location:latest.integration'
     compile 'com.amap.api:search:latest.integration'
 
     implementation 'com.alibaba:fastjson:1.2.80'
