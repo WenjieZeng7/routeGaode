@@ -76,6 +76,7 @@ import com.orange.amaplike.overlay.WalkRouteOverlay;
 import com.orange.amaplike.pickpoi.PoiItemEvent;
 import com.orange.amaplike.pickpoi.PoiSearchActivity;
 import com.orange.amaplike.pickpoi.SelectedMyPoiEvent;
+import com.orange.amaplike.po.LatLong;
 import com.orange.amaplike.po.UserDrivePath;
 import com.orange.amaplike.utils.Constants;
 import com.orange.amaplike.utils.ViewAnimUtils;
@@ -111,6 +112,13 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     private final int HISTORY_SIZE = 10;
     private DrivePath path; //统一用于路径规划信息上传
 
+    private List<LatLong> latLngs; // 用于距离服务
+    private int distance =0; // 用于距离服务
+    private int preDistance = 0; // 用于距离服务，判断数据点选择
+    private int overCount = 0; // 用于距离服务，记录distance > preDistance的次数
+    private int index = 0; // 当前选择的数据点序号
+    private String strategy; // 用于距离服务
+
 
     //netty
     Timer timer = new Timer();
@@ -119,25 +127,73 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         @Override
         public void handleMessage(Message msg) {
             if (msg.what == 0 && msg.arg1 == 1) {
-                Toast.makeText(RoutePlanActivity.this, "netty成功", Toast.LENGTH_SHORT).show();
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        connect();
-                    }
-                }).start();
-                try {
-                    Thread.sleep(3000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                Toast.makeText(RoutePlanActivity.this, "开始发送Http请求", Toast.LENGTH_SHORT).show();
+                // 下面这个是Netty的TCP通信
+//                new Thread(new Runnable() {
+//                    @Override
+//                    public void run() {
+//                        connect();
+//                    }
+//                }).start();
+//                try {
+//                    Thread.sleep(3000);
+//                } catch (InterruptedException e) {
+//                    e.printStackTrace();
+//                }
+//                timer.schedule(new TimerTask() {
+//                    @Override
+//                    public void run() {
+//                        LatLng latLng = getLatLngFromLocation();
+//                        send(MyApplication.user.getAccount() + "," + latLng.latitude + "," + latLng.longitude);
+//                    }
+//                },0,1000);
+
+
+//                new Thread(new Runnable() {
+//                    @Override
+//                    public void run() {
+//                        OkHttpClient client = new OkHttpClient(); //创建http客户端
+//                        Request request = new Request.Builder().url("http://"+ Constants.SEARCH_IP +":9090/drivepath/uploaddrivepath")
+//                                .post(RequestBody.create(MediaType.parse("application/json"), json)).build(); //创造http请求
+//                        Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
+//                    }
+//                }).
+
                 timer.schedule(new TimerTask() {
                     @Override
                     public void run() {
-                        LatLng latLng = getLatLngFromLocation();
-                        send(MyApplication.user.getAccount() + "," + latLng.latitude + "," + latLng.longitude);
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                OkHttpClient client = new OkHttpClient(); //创建http客户端
+                                LatLng latLng = getLatLngFromLocation();
+                                if(latLng.longitude == 0){
+                                    return;
+                                }
+                                Request request = new Request.Builder().url("https://restapi.amap.com/v3/direction/driving?origin="+ latLng.longitude +"," + latLng.latitude +
+                                        "&destination="+ latLngs.get(index).getLongitude() + ","+ latLngs.get(index).getLatitude() +"&extensions=base&output=json&key=" + Constants.GAODE_KEY).build();
+                                try {
+                                    Response response = client.newCall(request).execute();
+                                    String str = response.body().string();
+                                    String[] split = str.split("\\{");
+                                    String[] split1 = split[3].split(",");
+                                    preDistance = distance; // 正常来说，distance会越来越小。但如 过了第一个数据点，distance就越来越大。再设置一个大了2次的阈值，就可以判断要选下一个数据点了。
+                                    distance = Integer.valueOf(split1[0].substring(12, split1[0].length() - 1));
+                                    if(distance - preDistance > 15){
+                                        if(overCount ++ > 3 && index < latLngs.size() - 1){
+                                            index ++;
+                                            Log.d(TAG,"开始匹配下一个数据点:" + index);
+                                        }
+                                    }
+                                    Log.d(TAG,"距第"+index + "个数据点" + distance);
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        }).start();
                     }
-                },0,1000);
+                },0,5000);
+
             }
         }
     };
@@ -706,12 +762,18 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                     public void run() {
                         //发送可能会失败
                         try {
+                            //获取选择的策略
+                            strategy = path.getStrategy();
+                            Log.d(TAG,"当前策略:"+ strategy);
                             //上传
                             String json = JSON.toJSONString(new UserDrivePath(MyApplication.user.getAccount(),path)); //使用阿里的fastJson库
                             OkHttpClient client = new OkHttpClient(); //创建http客户端
                             Request request = new Request.Builder().url("http://"+ Constants.SEARCH_IP +":9090/drivepath/uploaddrivepath")
                                     .post(RequestBody.create(MediaType.parse("application/json"), json)).build(); //创造http请求
                             Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
+                            String str = response.body().string();
+                            latLngs = JSON.parseArray(str, LatLong.class);
+                            Log.d(TAG,"获取到的当前路径数据点"+ latLngs.toString());
                             //操作成功，弹窗提示
                             runOnUiThread(new Runnable() {
                                 @Override
@@ -719,9 +781,11 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                                     Toast.makeText(RoutePlanActivity.this, "路径上传成功", Toast.LENGTH_SHORT).show();
                                 }
                             });
-                            message.what = 0;
-                            message.arg1 = 1;
-//                            mHandler.sendMessage(message);
+                            if(latLngs.size() > 0){
+                                message.what = 0;
+                                message.arg1 = 1;
+                                mHandler.sendMessage(message);
+                            }
                         } catch (Exception e) {
 //                            message.arg1 = 0;
 //                            mHandler.sendMessage(message);
