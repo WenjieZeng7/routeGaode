@@ -12,7 +12,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.design.widget.CoordinatorLayout;
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.TabLayout;
@@ -64,6 +66,7 @@ import com.orange.amaplike.adapter.DrivePathAdapter;
 import com.orange.amaplike.adapter.RideStepAdapter;
 import com.orange.amaplike.adapter.WalkStepAdapter;
 import com.orange.amaplike.behavior.NoAnchorBottomSheetBehavior;
+import com.orange.amaplike.netty.NettyClient;
 import com.orange.amaplike.overlay.AMapServicesUtil;
 import com.orange.amaplike.overlay.AMapUtil;
 import com.orange.amaplike.overlay.BusRouteOverlay;
@@ -73,6 +76,8 @@ import com.orange.amaplike.overlay.WalkRouteOverlay;
 import com.orange.amaplike.pickpoi.PoiItemEvent;
 import com.orange.amaplike.pickpoi.PoiSearchActivity;
 import com.orange.amaplike.pickpoi.SelectedMyPoiEvent;
+import com.orange.amaplike.po.UserDrivePath;
+import com.orange.amaplike.utils.Constants;
 import com.orange.amaplike.utils.ViewAnimUtils;
 
 
@@ -80,8 +85,11 @@ import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
@@ -96,43 +104,108 @@ import okhttp3.Response;
  * created by czh on 2018/1/4
  * 高德地图路径规划
  */
-public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.OnRouteSearchListener ,BusResultListAdapter.BusListItemListner{
+public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.OnRouteSearchListener, BusResultListAdapter.BusListItemListner {
+    private static final String TAG = "RoutePlanActivity";
 
-    public static final String CITY_CODE="CityCode";
-    private final int HISTORY_SIZE=10;
+    public static final String CITY_CODE = "CityCode";
+    private final int HISTORY_SIZE = 10;
     private DrivePath path; //统一用于路径规划信息上传
 
-    @BindView(R.id.topLayout)RelativeLayout mTopLayout;
-    @BindView(R.id.route_plan_tab_layout) TabLayout mTabLayout;
-    @BindView(R.id.top_search_layout) LinearLayout mTopSearchLayout;
-    @BindView(R.id.route_plan_map) TextureMapView mMapView;
-    @BindView(R.id.route_plan_loca_btn) ImageView mImageViewBtn;
-    @BindView(R.id.coordinatorlayout) CoordinatorLayout mCoordinatorLayout;
-    @BindView(R.id.route_plan_from_edit) TextView mFromText;
-    @BindView(R.id.route_plan_to_edit) TextView mTargetText;
-    @BindView(R.id.bus_result_recyclerView)RecyclerView mBusResultRview;
+
+    //netty
+    Timer timer = new Timer();
+    private Message message = new Message();
+    private Handler mHandler = new Handler(Looper.myLooper()) {
+        @Override
+        public void handleMessage(Message msg) {
+            if (msg.what == 0 && msg.arg1 == 1) {
+                Toast.makeText(RoutePlanActivity.this, "netty成功", Toast.LENGTH_SHORT).show();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        connect();
+                    }
+                }).start();
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                timer.schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+                        LatLng latLng = getLatLngFromLocation();
+                        send(MyApplication.user.getAccount() + "," + latLng.latitude + "," + latLng.longitude);
+                    }
+                },0,1000);
+            }
+        }
+    };
 
 
-    @BindView(R.id.route_plan_float_btn)FloatingActionButton mFloatBtn;
-    @BindView(R.id.sheet_head_layout)LinearLayout mSheetHeadLayout;
-    @BindView(R.id.route_plan_poi_title) TextView mPoiTitleText;
-    @BindView(R.id.bottom_sheet) NestedScrollView mNesteScrollView;
-    @BindView(R.id.route_plan_poi_desc) TextView mPoiDescText;
-    @BindView(R.id.route_plan_poi_detail_layout) LinearLayout mPoiDetailLayout;
-    @BindView(R.id.path_detail_recyclerView) RecyclerView mPathDetailRecView;
-    @BindView(R.id.path_detail_traffic_light_text) TextView mPathTipsText;
-    @BindView(R.id.navi_start_btn_1) TextView mNaviText;
-    @BindView(R.id.navi_start_btn) Button mNaviBtn;
+    private String host = Constants.NETTY_IP;
+    private int port = Constants.NETTY_PORT;
+    private NettyClient nettyClient = new NettyClient(host, port);
 
-    @BindView(R.id.path_layout)LinearLayout mPathLayout;
-    @BindView(R.id.path_layout1)LinearLayout mPathLayout1;
-    @BindView(R.id.path_layout2)LinearLayout mPathLayout2;
-    @BindView(R.id.path_general_time)TextView mPathDurText;
-    @BindView(R.id.path_general_time1)TextView mPathDurText1;
-    @BindView(R.id.path_general_time2)TextView mPathDurText2;
-    @BindView(R.id.path_general_distance)TextView mPathDisText;
-    @BindView(R.id.path_general_distance1)TextView mPathDisText1;
-    @BindView(R.id.path_general_distance2)TextView mPathDisText2;
+    @BindView(R.id.topLayout)
+    RelativeLayout mTopLayout;
+    @BindView(R.id.route_plan_tab_layout)
+    TabLayout mTabLayout;
+    @BindView(R.id.top_search_layout)
+    LinearLayout mTopSearchLayout;
+    @BindView(R.id.route_plan_map)
+    TextureMapView mMapView;
+    @BindView(R.id.route_plan_loca_btn)
+    ImageView mImageViewBtn;
+    @BindView(R.id.coordinatorlayout)
+    CoordinatorLayout mCoordinatorLayout;
+    @BindView(R.id.route_plan_from_edit)
+    TextView mFromText;
+    @BindView(R.id.route_plan_to_edit)
+    TextView mTargetText;
+    @BindView(R.id.bus_result_recyclerView)
+    RecyclerView mBusResultRview;
+
+
+    @BindView(R.id.route_plan_float_btn)
+    FloatingActionButton mFloatBtn;
+    @BindView(R.id.sheet_head_layout)
+    LinearLayout mSheetHeadLayout;
+    @BindView(R.id.route_plan_poi_title)
+    TextView mPoiTitleText;
+    @BindView(R.id.bottom_sheet)
+    NestedScrollView mNesteScrollView;
+    @BindView(R.id.route_plan_poi_desc)
+    TextView mPoiDescText;
+    @BindView(R.id.route_plan_poi_detail_layout)
+    LinearLayout mPoiDetailLayout;
+    @BindView(R.id.path_detail_recyclerView)
+    RecyclerView mPathDetailRecView;
+    @BindView(R.id.path_detail_traffic_light_text)
+    TextView mPathTipsText;
+    @BindView(R.id.navi_start_btn_1)
+    TextView mNaviText;
+    @BindView(R.id.navi_start_btn)
+    Button mNaviBtn;
+
+    @BindView(R.id.path_layout)
+    LinearLayout mPathLayout;
+    @BindView(R.id.path_layout1)
+    LinearLayout mPathLayout1;
+    @BindView(R.id.path_layout2)
+    LinearLayout mPathLayout2;
+    @BindView(R.id.path_general_time)
+    TextView mPathDurText;
+    @BindView(R.id.path_general_time1)
+    TextView mPathDurText1;
+    @BindView(R.id.path_general_time2)
+    TextView mPathDurText2;
+    @BindView(R.id.path_general_distance)
+    TextView mPathDisText;
+    @BindView(R.id.path_general_distance1)
+    TextView mPathDisText1;
+    @BindView(R.id.path_general_distance2)
+    TextView mPathDisText2;
 
     private NoAnchorBottomSheetBehavior mBehavior;
     private BusResultListAdapter mBusResultAdapter;
@@ -142,19 +215,19 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
 
 
     private static final int MSG_MOVE_CAMERA = 0x01;
-    private final int TYPE_DRIVE=100;
-    private final int TYPE_BUS=101;
-    private final int TYPE_WALK=102;
-    private final int TYPE_RIDE=103;
-    private int mSelectedType =TYPE_DRIVE;
+    private final int TYPE_DRIVE = 100;
+    private final int TYPE_BUS = 101;
+    private final int TYPE_WALK = 102;
+    private final int TYPE_RIDE = 103;
+    private int mSelectedType = TYPE_DRIVE;
 
-    private int mTopLayoutHeight=200;
+    private int mTopLayoutHeight = 200;
     private Context mContext;
 
-    private float mDegree=0f;
+    private float mDegree = 0f;
     private SensorManager mSensorManager;
 
-    private boolean FirstLocate =true;
+    private boolean FirstLocate = true;
     private AMap mAmap;
     private MyLocationStyle mLocationStyle;
     private Poi mEndPoi;
@@ -164,7 +237,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     private WalkRouteResult mWalkRouteResult;
     private RideRouteResult mRideRouteResult;
 
-    private Handler mHandlerr=new Handler(){
+    private Handler mHandlerr = new Handler() {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
@@ -179,7 +252,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_route_plan);
-        mContext=this;
+        mContext = this;
         ButterKnife.bind(this);
         EventBus.getDefault().register(this);
 
@@ -196,7 +269,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-                Handler handler=new Handler(Looper.getMainLooper());
+                Handler handler = new Handler(Looper.getMainLooper());
                 handler.post(new Runnable() {
                     @Override
                     public void run() {
@@ -213,8 +286,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
 
-
-    private void initView(){
+    private void initView() {
         /**   公交页面   **/
         LinearLayoutManager linearLayoutManager = new LinearLayoutManager(this);
         linearLayoutManager.setOrientation(LinearLayoutManager.VERTICAL);
@@ -224,13 +296,13 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mTopLayout.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
-                mTopLayoutHeight=mTopLayout.getHeight();
+                mTopLayoutHeight = mTopLayout.getHeight();
                 mTopLayout.getViewTreeObserver().removeOnGlobalLayoutListener(this);
             }
         });
     }
 
-    private void initSheet(){
+    private void initSheet() {
         mBehavior = NoAnchorBottomSheetBehavior.from(mNesteScrollView);
         mBehavior.setState(NoAnchorBottomSheetBehavior.STATE_COLLAPSED);
         mBehavior.setPeekHeight(getSheetHeadHeight());
@@ -242,11 +314,11 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
 
             @Override
             public void onSlide(@NonNull View bottomSheet, float slideOffset) {
-                if (mTopLayout.getVisibility()==View.VISIBLE && mPathDetailRecView.getVisibility()==View.VISIBLE){
-                    if (slideOffset>0.5){
+                if (mTopLayout.getVisibility() == View.VISIBLE && mPathDetailRecView.getVisibility() == View.VISIBLE) {
+                    if (slideOffset > 0.5) {
                         mNaviText.setVisibility(View.GONE);
                         mNaviBtn.setVisibility(View.VISIBLE);
-                    }else {
+                    } else {
                         mNaviText.setVisibility(View.VISIBLE);
                         mNaviBtn.setVisibility(View.GONE);
                     }
@@ -258,7 +330,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mPathDetailRecView.setLayoutManager(linearLayoutManager);
     }
 
-    private void initTabLayout(){
+    private void initTabLayout() {
         mTabLayout.addTab(mTabLayout.newTab().setText(R.string.route_plan_drive));
         mTabLayout.addTab(mTabLayout.newTab().setText(R.string.route_plan_bus));
         mTabLayout.addTab(mTabLayout.newTab().setText(R.string.route_plan_walk));
@@ -266,33 +338,33 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mTabLayout.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
-                if (getString(R.string.route_plan_drive).equals(tab.getText())){
-                    mSelectedType =TYPE_DRIVE;
-                    if (mEndPoi==null){
+                if (getString(R.string.route_plan_drive).equals(tab.getText())) {
+                    mSelectedType = TYPE_DRIVE;
+                    if (mEndPoi == null) {
                         return;
                     }
-                    Location myLocation=mAmap.getMyLocation();
-                    routeSearch(mStartPoi,mEndPoi,TYPE_DRIVE);
-                }else if (getString(R.string.route_plan_bus).equals(tab.getText())){
-                    mSelectedType =TYPE_BUS;
-                    if (mEndPoi==null){
+                    Location myLocation = mAmap.getMyLocation();
+                    routeSearch(mStartPoi, mEndPoi, TYPE_DRIVE);
+                } else if (getString(R.string.route_plan_bus).equals(tab.getText())) {
+                    mSelectedType = TYPE_BUS;
+                    if (mEndPoi == null) {
                         return;
                     }
-                    routeSearch(mStartPoi,mEndPoi,TYPE_BUS);
-                }else if (getString(R.string.route_plan_walk).equals(tab.getText())){
-                    mSelectedType =TYPE_WALK;
-                    if (mEndPoi==null){
+                    routeSearch(mStartPoi, mEndPoi, TYPE_BUS);
+                } else if (getString(R.string.route_plan_walk).equals(tab.getText())) {
+                    mSelectedType = TYPE_WALK;
+                    if (mEndPoi == null) {
                         return;
                     }
-                    Location location=mAmap.getMyLocation();
-                    routeSearch(mStartPoi,mEndPoi,TYPE_WALK);
-                }else if (getString(R.string.route_plan_ride).equals(tab.getText())){
-                    mSelectedType =TYPE_RIDE;
-                    if (mEndPoi==null){
+                    Location location = mAmap.getMyLocation();
+                    routeSearch(mStartPoi, mEndPoi, TYPE_WALK);
+                } else if (getString(R.string.route_plan_ride).equals(tab.getText())) {
+                    mSelectedType = TYPE_RIDE;
+                    if (mEndPoi == null) {
                         return;
                     }
-                    Location location=mAmap.getMyLocation();
-                    routeSearch(mStartPoi,mEndPoi,TYPE_RIDE);
+                    Location location = mAmap.getMyLocation();
+                    routeSearch(mStartPoi, mEndPoi, TYPE_RIDE);
                 }
             }
 
@@ -308,11 +380,11 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         });
     }
 
-    private void initMap(Bundle savedInstanceState){
-        long t1= System.currentTimeMillis();
+    private void initMap(Bundle savedInstanceState) {
+        long t1 = System.currentTimeMillis();
         mMapView.onCreate(savedInstanceState);
-        Log.d("czh",System.currentTimeMillis()-t1+"ms");
-        mAmap=mMapView.getMap();
+        Log.d("czh", System.currentTimeMillis() - t1 + "ms");
+        mAmap = mMapView.getMap();
 
         /**   基本设置   **/
         mAmap.setTrafficEnabled(true);
@@ -320,7 +392,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mAmap.getUiSettings().setZoomPosition(AMapOptions.ZOOM_POSITION_RIGHT_CENTER);
 
         /**   定位模式   **/
-        mLocationStyle=new MyLocationStyle();
+        mLocationStyle = new MyLocationStyle();
         mLocationStyle.myLocationType(MyLocationStyle.LOCATION_TYPE_LOCATION_ROTATE_NO_CENTER);
         mLocationStyle.interval(2000);
         mAmap.setMyLocationStyle(mLocationStyle);
@@ -331,11 +403,11 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mAmap.setOnMyLocationChangeListener(new AMap.OnMyLocationChangeListener() {
             @Override
             public void onMyLocationChange(Location location) {
-                if (FirstLocate){
-                    FirstLocate =false;
+                if (FirstLocate) {
+                    FirstLocate = false;
                     LocaBtnOnclick();
-                    mStartPoi=new Poi(getString(R.string.poi_search_my_location),
-                            new LatLng(location.getLatitude(),location.getLongitude()),"");
+                    mStartPoi = new Poi(getString(R.string.poi_search_my_location),
+                            new LatLng(location.getLatitude(), location.getLongitude()), "");
                     updateEditUI();
                 }
             }
@@ -368,37 +440,44 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
             @Override
             public void onDoubleTap(float v, float v1) {
             }
+
             @Override
             public void onSingleTap(float v, float v1) {
             }
+
             @Override
             public void onFling(float v, float v1) {
             }
+
             @Override
             public void onScroll(float v, float v1) {
             }
+
             @Override
             public void onLongPress(float v, float v1) {
             }
+
             @Override
             public void onDown(float v, float v1) {
             }
+
             @Override
             public void onUp(float v, float v1) {
-                mBtnState=BTN_STATE_NOR;
+                mBtnState = BTN_STATE_NOR;
                 LocateBtnUIChagen();
             }
+
             @Override
             public void onMapStable() {
             }
         });
     }
 
-    private SensorEventListener mSensorListner=new SensorEventListener() {
+    private SensorEventListener mSensorListner = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent event) {
             float degree = event.values[0];
-            mDegree=degree;
+            mDegree = degree;
 //            xLog.D("degree:"+mDegree);
         }
 
@@ -408,7 +487,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         }
     };
 
-    private void initSensor(){
+    private void initSensor() {
         mSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         mSensorManager.registerListener(mSensorListner,
                 mSensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION),
@@ -416,113 +495,119 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
 
+    private final int BTN_STATE_NOR = 100;
+    private final int BTN_STATE_LOCATE = 101;
+    private final int BTN_STATE_DIRE = 102;
 
-    private final int BTN_STATE_NOR=100;
-    private final int BTN_STATE_LOCATE=101;
-    private final int BTN_STATE_DIRE=102;
+    private int mBtnState = BTN_STATE_NOR;
 
-    private int mBtnState=BTN_STATE_NOR;
     @OnClick(R.id.route_plan_loca_btn)
-    public void LocaBtnOnclick(){
-        if (mBtnState==BTN_STATE_NOR){
+    public void LocaBtnOnclick() {
+        if (mBtnState == BTN_STATE_NOR) {
             mAmap.setMapType(AMap.MAP_TYPE_NORMAL);
-            changeMapLevelAndAngle(16,0);
-            mBtnState=BTN_STATE_LOCATE;
+            changeMapLevelAndAngle(16, 0);
+            mBtnState = BTN_STATE_LOCATE;
             LocateBtnUIChagen();
-        }else if (mBtnState==BTN_STATE_LOCATE){
+        } else if (mBtnState == BTN_STATE_LOCATE) {
             mAmap.setMapType(AMap.MAP_TYPE_NORMAL);
-            changeMapLevelAndAngle(18,40);
-            mBtnState=BTN_STATE_DIRE;
+            changeMapLevelAndAngle(18, 40);
+            mBtnState = BTN_STATE_DIRE;
             LocateBtnUIChagen();
-        }else if (mBtnState==BTN_STATE_DIRE){
+        } else if (mBtnState == BTN_STATE_DIRE) {
             mAmap.setMapType(AMap.MAP_TYPE_NORMAL);
-            changeMapLevelAndAngle(16,0);
-            mBtnState=BTN_STATE_NOR;
+            changeMapLevelAndAngle(16, 0);
+            mBtnState = BTN_STATE_NOR;
             LocateBtnUIChagen();
         }
     }
 
-    private void changeMapLevelAndAngle(final int lv, final int angle){
-        CameraUpdate mCameraUpdate= CameraUpdateFactory.newLatLngZoom(
-                new LatLng(mAmap.getMyLocation().getLatitude(),mAmap.getMyLocation().getLongitude())
-                ,lv);
+    private void changeMapLevelAndAngle(final int lv, final int angle) {
+        CameraUpdate mCameraUpdate = CameraUpdateFactory.newLatLngZoom(
+                new LatLng(mAmap.getMyLocation().getLatitude(), mAmap.getMyLocation().getLongitude())
+                , lv);
         mAmap.animateCamera(mCameraUpdate, new AMap.CancelableCallback() {
             @Override
             public void onFinish() {
                 mAmap.animateCamera(CameraUpdateFactory.changeTilt(angle), new AMap.CancelableCallback() {
                     @Override
                     public void onFinish() {
-                        if (lv>17){
-                            CameraUpdate cameraUpdate= CameraUpdateFactory.changeBearing(mDegree);
+                        if (lv > 17) {
+                            CameraUpdate cameraUpdate = CameraUpdateFactory.changeBearing(mDegree);
                             mAmap.animateCamera(cameraUpdate);
-                        }else{
-                            CameraUpdate cameraUpdate= CameraUpdateFactory.changeBearing(0);
+                        } else {
+                            CameraUpdate cameraUpdate = CameraUpdateFactory.changeBearing(0);
                             mAmap.animateCamera(cameraUpdate);
                         }
 
                     }
+
                     @Override
-                    public void onCancel() {}
+                    public void onCancel() {
+                    }
                 });
             }
+
             @Override
-            public void onCancel() {}
+            public void onCancel() {
+            }
         });
     }
 
 
     /**
      * 选点返回处理
+     *
      * @param event
      */
     @Subscribe(threadMode = ThreadMode.MAIN)
-    public void selectPoiEvent(PoiItemEvent event){
-        PoiItem item=event.getItem();
-        LatLonPoint point=item.getLatLonPoint();
-        LatLng latLng=new LatLng(point.getLatitude(),point.getLongitude());
-        if (event.getFrom()== PoiSearchActivity.FROM_START){
-            mStartPoi=new Poi(item.getTitle(),latLng,item.getAdName());
-        }else if (event.getFrom()==PoiSearchActivity.FROM_TARGET){
-            mEndPoi=new Poi(item.getTitle(),latLng,item.getAdName());
+    public void selectPoiEvent(PoiItemEvent event) {
+        PoiItem item = event.getItem();
+        LatLonPoint point = item.getLatLonPoint();
+        LatLng latLng = new LatLng(point.getLatitude(), point.getLongitude());
+        if (event.getFrom() == PoiSearchActivity.FROM_START) {
+            mStartPoi = new Poi(item.getTitle(), latLng, item.getAdName());
+        } else if (event.getFrom() == PoiSearchActivity.FROM_TARGET) {
+            mEndPoi = new Poi(item.getTitle(), latLng, item.getAdName());
         }
         updateEditUI();
 //        goToPlaceAndMark(item);
 
         mPoiTitleText.setText(item.getTitle());
-        mPoiDescText.setText(item.getAdName()+"    "+item.getSnippet());
+        mPoiDescText.setText(item.getAdName() + "    " + item.getSnippet());
 
-        if (mStartPoi==null || mEndPoi==null){
+        if (mStartPoi == null || mEndPoi == null) {
             return;
         }
-        routeSearch(mStartPoi,mEndPoi,mSelectedType);
+        routeSearch(mStartPoi, mEndPoi, mSelectedType);
     }
-
 
 
     /**
      * 点击我的位置处理
+     *
      * @param event
      */
     @Subscribe(threadMode = ThreadMode.MAIN)
-    public void selectedMyPoiEvent(SelectedMyPoiEvent event){
-        Location location=mAmap.getMyLocation();
-        if (event.getFrom()==PoiSearchActivity.FROM_START){
-            mStartPoi=new Poi(getString(R.string.poi_search_my_location),
-                    new LatLng(location.getLatitude(),location.getLongitude()),"");
-        }else if (event.getFrom()==PoiSearchActivity.FROM_TARGET){
-            mEndPoi=new Poi(getString(R.string.poi_search_my_location),
-                    new LatLng(location.getLatitude(),location.getLongitude()),"");
+    public void selectedMyPoiEvent(SelectedMyPoiEvent event) {
+        Location location = mAmap.getMyLocation();
+        if (event.getFrom() == PoiSearchActivity.FROM_START) {
+            mStartPoi = new Poi(getString(R.string.poi_search_my_location),
+                    new LatLng(location.getLatitude(), location.getLongitude()), "");
+        } else if (event.getFrom() == PoiSearchActivity.FROM_TARGET) {
+            mEndPoi = new Poi(getString(R.string.poi_search_my_location),
+                    new LatLng(location.getLatitude(), location.getLongitude()), "");
         }
         updateEditUI();
     }
 
     /**
      * 地图poi点击
+     *
      * @param poi
      */
-    private void onPoiClick(Poi poi){
+    private void onPoiClick(Poi poi) {
         goToPlace(poi.getCoordinate());
-        mEndPoi=poi;
+        mEndPoi = poi;
         mTargetText.setText(poi.getName());
         mPoiTitleText.setText(poi.getName());
         mPoiDescText.setText(poi.toString());
@@ -541,78 +626,78 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mAmap.addMarker(new MarkerOptions().position(poi.getCoordinate()).title(poi.getName()));
     }
 
-    private void goToPlace(LatLng latLng){
-        CameraUpdate cameraUpdate= CameraUpdateFactory.newLatLng(latLng);
+    private void goToPlace(LatLng latLng) {
+        CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLng(latLng);
         mAmap.animateCamera(cameraUpdate);
     }
 
 
-    private LatLng getLatLngFromLocation(){
-        Location location=mAmap.getMyLocation();
-        return new LatLng(location.getLatitude(),location.getLongitude());
+    private LatLng getLatLngFromLocation() {
+        Location location = mAmap.getMyLocation();
+        return new LatLng(location.getLatitude(), location.getLongitude());
     }
 
 
-    private void goToPlaceAndMark(PoiItem item){
-        LatLonPoint point=item.getLatLonPoint();
-        LatLng latLng=new LatLng(point.getLatitude(),point.getLongitude());
-        CameraUpdate cameraUpdate= CameraUpdateFactory.newLatLngZoom(latLng ,16);
+    private void goToPlaceAndMark(PoiItem item) {
+        LatLonPoint point = item.getLatLonPoint();
+        LatLng latLng = new LatLng(point.getLatitude(), point.getLongitude());
+        CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngZoom(latLng, 16);
         mAmap.clear();
         mAmap.animateCamera(cameraUpdate);
         mAmap.addMarker(new MarkerOptions().position(latLng).title(item.getTitle()));
     }
 
-    private void LocateBtnUIChagen(){
-        if (mBtnState==BTN_STATE_NOR){
+    private void LocateBtnUIChagen() {
+        if (mBtnState == BTN_STATE_NOR) {
             mImageViewBtn.setImageResource(R.drawable.icon_c34);
-        }else if (mBtnState==BTN_STATE_LOCATE){
+        } else if (mBtnState == BTN_STATE_LOCATE) {
             mImageViewBtn.setImageResource(R.drawable.icon_c34_b);
-        }else if (mBtnState==BTN_STATE_DIRE){
+        } else if (mBtnState == BTN_STATE_DIRE) {
             mImageViewBtn.setImageResource(R.drawable.icon_c34_a);
         }
     }
 
-    @OnClick({R.id.route_plan_return_btn,R.id.top_search_layout,R.id.route_plan_start_edit_layout,R.id.route_plan_to_edit_layout,
-            R.id.route_plan_exchange_btn,R.id.route_plan_float_btn,R.id.navi_start_btn,R.id.navi_start_btn_1,
-            R.id.path_layout,R.id.path_layout1,R.id.path_layout2
+    @OnClick({R.id.route_plan_return_btn, R.id.top_search_layout, R.id.route_plan_start_edit_layout, R.id.route_plan_to_edit_layout,
+            R.id.route_plan_exchange_btn, R.id.route_plan_float_btn, R.id.navi_start_btn, R.id.navi_start_btn_1,
+            R.id.path_layout, R.id.path_layout1, R.id.path_layout2
     })
-    public void onViewclik(View view){
-        if (FirstLocate){
+    public void onViewclik(View view) {
+        if (FirstLocate) {
             return;
         }
-        switch (view.getId()){
+        switch (view.getId()) {
             case R.id.route_plan_return_btn:
                 finish();
                 break;
             case R.id.top_search_layout:
-                Location location3=mAmap.getMyLocation();
-                PoiSearchActivity.start(mContext,location3.getExtras(),location3.getLatitude(),location3.getLongitude(),PoiSearchActivity.FROM_TARGET);
+                Location location3 = mAmap.getMyLocation();
+                PoiSearchActivity.start(mContext, location3.getExtras(), location3.getLatitude(), location3.getLongitude(), PoiSearchActivity.FROM_TARGET);
                 break;
             case R.id.route_plan_start_edit_layout:
-                Location location1=mAmap.getMyLocation();
-                PoiSearchActivity.start(mContext,location1.getExtras(),location1.getLatitude(),location1.getLongitude(),PoiSearchActivity.FROM_START);
+                Location location1 = mAmap.getMyLocation();
+                PoiSearchActivity.start(mContext, location1.getExtras(), location1.getLatitude(), location1.getLongitude(), PoiSearchActivity.FROM_START);
                 break;
             case R.id.route_plan_to_edit_layout:
 //                startActivity(new Intent(mContext, BusActivity.class));
-                Location location2=mAmap.getMyLocation();
-                PoiSearchActivity.start(mContext,location2.getExtras(),location2.getLatitude(),location2.getLongitude(),PoiSearchActivity.FROM_TARGET);
+                Location location2 = mAmap.getMyLocation();
+                PoiSearchActivity.start(mContext, location2.getExtras(), location2.getLatitude(), location2.getLongitude(), PoiSearchActivity.FROM_TARGET);
                 break;
             case R.id.route_plan_exchange_btn:
-                Poi temp=mStartPoi;
-                mStartPoi=mEndPoi;
-                mEndPoi=temp;
+                Poi temp = mStartPoi;
+                mStartPoi = mEndPoi;
+                mEndPoi = temp;
                 updateEditUI();
-                routeSearch(mStartPoi,mEndPoi, mSelectedType);
+                routeSearch(mStartPoi, mEndPoi, mSelectedType);
                 break;
             case R.id.route_plan_float_btn:
-                if (mEndPoi==null){
+                if (mEndPoi == null) {
                     return;
                 }
-                routeSearch(mStartPoi,mEndPoi,mSelectedType);
+                routeSearch(mStartPoi, mEndPoi, mSelectedType);
                 break;
             case R.id.navi_start_btn:
             case R.id.navi_start_btn_1:
-                if (mEndPoi==null){
+                if (mEndPoi == null) {
                     return;
                 }
                 // 在用户点击【开始导航】后才发送最终确定的路径详细信息。
@@ -620,32 +705,37 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                     @Override
                     public void run() {
                         //发送可能会失败
-                        try{
+                        try {
                             //上传
-                            String json = JSON.toJSONString(path); //使用阿里的fastJson库
+                            String json = JSON.toJSONString(new UserDrivePath(MyApplication.user.getAccount(),path)); //使用阿里的fastJson库
                             OkHttpClient client = new OkHttpClient(); //创建http客户端
-                            Request request = new Request.Builder().url("http://10.181.231.205:9090/drivepath/uploaddrivepath")
-                                    .post(RequestBody.create(MediaType.parse("application/json"),json)).build(); //创造http请求
+                            Request request = new Request.Builder().url("http://"+ Constants.SEARCH_IP +":9090/drivepath/uploaddrivepath")
+                                    .post(RequestBody.create(MediaType.parse("application/json"), json)).build(); //创造http请求
                             Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
                             //操作成功，弹窗提示
                             runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
-                                    Toast.makeText(RoutePlanActivity.this,"路径上传成功",Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(RoutePlanActivity.this, "路径上传成功", Toast.LENGTH_SHORT).show();
                                 }
                             });
-                        }catch (Exception e){
+                            message.what = 0;
+                            message.arg1 = 1;
+//                            mHandler.sendMessage(message);
+                        } catch (Exception e) {
+//                            message.arg1 = 0;
+//                            mHandler.sendMessage(message);
                             e.printStackTrace();
                             runOnUiThread(new Runnable() { //UI操作必须要在主线程中，所以弹出操作要在runOnUiThread()中进行
                                 @Override
                                 public void run() {
-                                    Toast.makeText(RoutePlanActivity.this,"路径上传失败",Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(RoutePlanActivity.this, "路径上传失败", Toast.LENGTH_SHORT).show();
                                 }
                             });
                         }
                     }
                 }).start();
-                new NaviDialog().showView(mContext,mStartPoi,mEndPoi,mSelectedType);
+//                new NaviDialog().showView(mContext,mStartPoi,mEndPoi,mSelectedType); // 开启其他导航
                 break;
             case R.id.path_layout:
                 onPathClick(0);
@@ -659,21 +749,21 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         }
     }
 
-    private void onPathClick(int i){
-        switch (mSelectedType){
+    private void onPathClick(int i) {
+        switch (mSelectedType) {
             case TYPE_DRIVE:
                 path = mDriveRouteResult.getPaths().get(i);  //获取路径规划信息
-                mPathTipsText.setText(getString(R.string.route_plan_path_traffic_lights,mDriveRouteResult.getPaths().get(i).getTotalTrafficlights()+""));
-                mPathDetailRecView.setAdapter(new DrivePathAdapter(mContext,mDriveRouteResult.getPaths().get(i).getSteps()));
-                drawDriveRoutes(mDriveRouteResult,mDriveRouteResult.getPaths().get(i));
+                mPathTipsText.setText(getString(R.string.route_plan_path_traffic_lights, mDriveRouteResult.getPaths().get(i).getTotalTrafficlights() + ""));
+                mPathDetailRecView.setAdapter(new DrivePathAdapter(mContext, mDriveRouteResult.getPaths().get(i).getSteps()));
+                drawDriveRoutes(mDriveRouteResult, mDriveRouteResult.getPaths().get(i));
                 break;
             case TYPE_WALK:
-                mPathDetailRecView.setAdapter(new WalkStepAdapter(mContext,mWalkRouteResult.getPaths().get(i).getSteps()));
-                drawWalkRoutes(mWalkRouteResult,mWalkRouteResult.getPaths().get(i));
+                mPathDetailRecView.setAdapter(new WalkStepAdapter(mContext, mWalkRouteResult.getPaths().get(i).getSteps()));
+                drawWalkRoutes(mWalkRouteResult, mWalkRouteResult.getPaths().get(i));
                 break;
             case TYPE_RIDE:
-                mPathDetailRecView.setAdapter(new RideStepAdapter(mContext,mRideRouteResult.getPaths().get(i).getSteps()));
-                drawRideRoutes(mRideRouteResult,mRideRouteResult.getPaths().get(i));
+                mPathDetailRecView.setAdapter(new RideStepAdapter(mContext, mRideRouteResult.getPaths().get(i).getSteps()));
+                drawRideRoutes(mRideRouteResult, mRideRouteResult.getPaths().get(i));
                 break;
             default:
                 break;
@@ -681,37 +771,37 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
 
-    private void updateEditUI(){
-        if (mStartPoi==null){
+    private void updateEditUI() {
+        if (mStartPoi == null) {
             mFromText.setText("");
 //            mFromText.setText(getString(R.string.poi_search_my_location));
-        }else {
+        } else {
             mFromText.setText(mStartPoi.getName());
         }
-        if (mEndPoi==null){
+        if (mEndPoi == null) {
             mTargetText.setText("");
-        }else {
+        } else {
             mTargetText.setText(mEndPoi.getName());
         }
     }
 
-    private void updatePathGeneral(Path path,int i){
+    private void updatePathGeneral(Path path, int i) {
         String dur = AMapUtil.getFriendlyTime((int) path.getDuration());
         String dis = AMapUtil.getFriendlyLength((int) path.getDistance());
-        if (i==0){
+        if (i == 0) {
             mPathDurText.setText(dur);
             mPathDisText.setText(dis);
             mPathLayout.setVisibility(View.VISIBLE);
             mPathLayout1.setVisibility(View.GONE);
             mPathLayout2.setVisibility(View.GONE);
-        }else if (i==1){
+        } else if (i == 1) {
             mPathDurText1.setText(dur);
             mPathDisText1.setText(dis);
             mPathLayout.setVisibility(View.VISIBLE);
             mPathLayout1.setVisibility(View.VISIBLE);
             mPathLayout2.setVisibility(View.GONE);
 
-        }else if (i==2){
+        } else if (i == 2) {
             mPathDurText2.setText(dur);
             mPathDisText2.setText(dis);
             mPathLayout.setVisibility(View.VISIBLE);
@@ -721,49 +811,49 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
 
-    private int getSheetHeadHeight(){
-        mSheetHeadLayout.measure(0,0);
-        Log.d("czh",mSheetHeadLayout.getMeasuredHeight()+"height");
+    private int getSheetHeadHeight() {
+        mSheetHeadLayout.measure(0, 0);
+        Log.d("czh", mSheetHeadLayout.getMeasuredHeight() + "height");
         return mSheetHeadLayout.getMeasuredHeight();
     }
 
-    private int getTopLayoutHeight(){
+    private int getTopLayoutHeight() {
 //        RelativeLayout.LayoutParams lp=(RelativeLayout.LayoutParams) mTopLayout.getLayoutParams();
-        Log.d("czh",mTopLayoutHeight+"top height");
+        Log.d("czh", mTopLayoutHeight + "top height");
         return mTopLayout.getHeight();
     }
 
-    private void routeSearch(Poi startPoi, Poi targetPoi, int type){
-        if(startPoi==null || targetPoi==null){
+    private void routeSearch(Poi startPoi, Poi targetPoi, int type) {
+        if (startPoi == null || targetPoi == null) {
             return;
         }
-        LatLng start=startPoi.getCoordinate();
-        LatLng target=targetPoi.getCoordinate();
+        LatLng start = startPoi.getCoordinate();
+        LatLng target = targetPoi.getCoordinate();
 
-        RouteSearch routeSearch= null;
+        RouteSearch routeSearch = null;
         try {
             routeSearch = new RouteSearch(this);
         } catch (AMapException e) {
             e.printStackTrace();
         }
         routeSearch.setRouteSearchListener(this);
-        RouteSearch.FromAndTo fromAndTo=new RouteSearch.FromAndTo(AMapServicesUtil.convertToLatLonPoint(start),AMapServicesUtil.convertToLatLonPoint(target));
-        switch (type){
+        RouteSearch.FromAndTo fromAndTo = new RouteSearch.FromAndTo(AMapServicesUtil.convertToLatLonPoint(start), AMapServicesUtil.convertToLatLonPoint(target));
+        switch (type) {
             case TYPE_DRIVE:
-                RouteSearch.DriveRouteQuery dquery=new RouteSearch.DriveRouteQuery(fromAndTo, RouteSearch.DRIVING_MULTI_STRATEGY_FASTEST_SHORTEST,null,null,"");
+                RouteSearch.DriveRouteQuery dquery = new RouteSearch.DriveRouteQuery(fromAndTo, RouteSearch.DRIVING_MULTI_STRATEGY_FASTEST_SHORTEST, null, null, "");
                 routeSearch.calculateDriveRouteAsyn(dquery);
                 break;
             case TYPE_BUS:
-                RouteSearch.BusRouteQuery bquery=new RouteSearch.BusRouteQuery(fromAndTo, RouteSearch.BUS_DEFAULT,
-                        mAmap.getMyLocation().getExtras().getString(CITY_CODE),0);
+                RouteSearch.BusRouteQuery bquery = new RouteSearch.BusRouteQuery(fromAndTo, RouteSearch.BUS_DEFAULT,
+                        mAmap.getMyLocation().getExtras().getString(CITY_CODE), 0);
                 routeSearch.calculateBusRouteAsyn(bquery);
                 break;
             case TYPE_WALK:
-                RouteSearch.WalkRouteQuery wquery=new RouteSearch.WalkRouteQuery(fromAndTo, RouteSearch.WALK_DEFAULT );
+                RouteSearch.WalkRouteQuery wquery = new RouteSearch.WalkRouteQuery(fromAndTo, RouteSearch.WALK_DEFAULT);
                 routeSearch.calculateWalkRouteAsyn(wquery);
                 break;
             case TYPE_RIDE:
-                RouteSearch.RideRouteQuery rquery=new RouteSearch.RideRouteQuery(fromAndTo, RouteSearch.RIDING_DEFAULT );
+                RouteSearch.RideRouteQuery rquery = new RouteSearch.RideRouteQuery(fromAndTo, RouteSearch.RIDING_DEFAULT);
                 routeSearch.calculateRideRouteAsyn(rquery);
                 break;
             default:
@@ -774,43 +864,43 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
 
     @Override
     public void onDriveRouteSearched(DriveRouteResult driveRouteResult, int errorCode) {
-        if (errorCode==1000){
-            if (driveRouteResult != null && driveRouteResult.getPaths() != null){
-                if (driveRouteResult.getPaths().size() > 0){
+        if (errorCode == 1000) {
+            if (driveRouteResult != null && driveRouteResult.getPaths() != null) {
+                if (driveRouteResult.getPaths().size() > 0) {
                     updateUiAfterRouted();
-                    mDriveRouteResult=driveRouteResult;
+                    mDriveRouteResult = driveRouteResult;
 
-                    path=mDriveRouteResult.getPaths().get(0);  //获取路径规划信息
-                    mDrivePathAdapter=new DrivePathAdapter(mContext,path.getSteps());
+                    path = mDriveRouteResult.getPaths().get(0);  //获取路径规划信息
+                    mDrivePathAdapter = new DrivePathAdapter(mContext, path.getSteps());
                     mPathDetailRecView.setAdapter(mDrivePathAdapter);
                     mPathDetailRecView.setVisibility(View.VISIBLE);
 
-                    mPathTipsText.setText(getString(R.string.route_plan_path_traffic_lights,path.getTotalTrafficlights()+""));
+                    mPathTipsText.setText(getString(R.string.route_plan_path_traffic_lights, path.getTotalTrafficlights() + ""));
                     mPathTipsText.setVisibility(View.VISIBLE);
-                    drawDriveRoutes(mDriveRouteResult,path);
+                    drawDriveRoutes(mDriveRouteResult, path);
 
-                    for (int i=0;i<mDriveRouteResult.getPaths().size();i++){
-                        updatePathGeneral(mDriveRouteResult.getPaths().get(i),i);
+                    for (int i = 0; i < mDriveRouteResult.getPaths().size(); i++) {
+                        updatePathGeneral(mDriveRouteResult.getPaths().get(i), i);
                     }
 
                     mBehavior.setPeekHeight(getSheetHeadHeight());
-                }else if (driveRouteResult != null && driveRouteResult.getPaths() == null) {
-                    Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+                } else if (driveRouteResult != null && driveRouteResult.getPaths() == null) {
+                    Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
                 }
-            }else {
-                Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
             }
-        }else {
-            Toast.makeText(mContext,R.string.poi_search_error,Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(mContext, R.string.poi_search_error, Toast.LENGTH_LONG).show();
         }
     }
 
     @Override
     public void onBusRouteSearched(BusRouteResult busRouteResult, int errorCode) {
-        if (errorCode==1000){
-            if (busRouteResult != null && busRouteResult.getPaths() != null){
-                if (busRouteResult.getPaths().size() > 0){
-                    if (mTopLayout.getVisibility()!=View.VISIBLE){
+        if (errorCode == 1000) {
+            if (busRouteResult != null && busRouteResult.getPaths() != null) {
+                if (busRouteResult.getPaths().size() > 0) {
+                    if (mTopLayout.getVisibility() != View.VISIBLE) {
 //                        mTopSearchLayout.setVisibility(View.GONE);
                         mFloatBtn.hide();
                         ViewAnimUtils.dropDownWithInterpolator(mTopLayout, new ViewAnimUtils.AnimEndListener() {
@@ -823,7 +913,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                     mNesteScrollView.setVisibility(View.GONE);
 
                     mBusRouteResult = busRouteResult;
-                    mBusResultAdapter=new BusResultListAdapter(mContext,busRouteResult);
+                    mBusResultAdapter = new BusResultListAdapter(mContext, busRouteResult);
                     mBusResultRview.setAdapter(mBusResultAdapter);
                     ViewAnimUtils.popupinWithInterpolator(mBusResultRview, new ViewAnimUtils.AnimEndListener() {
                         @Override
@@ -832,79 +922,79 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                         }
                     });
 //                    drawBusRoutes(mBusRouteResult,mBusRouteResult.getPaths().get(0));
-                }else if (busRouteResult != null && busRouteResult.getPaths() == null) {
-                    Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+                } else if (busRouteResult != null && busRouteResult.getPaths() == null) {
+                    Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
                 }
-            }else {
-                Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
             }
-        }else {
-            Toast.makeText(mContext,R.string.poi_search_error,Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(mContext, R.string.poi_search_error, Toast.LENGTH_LONG).show();
         }
     }
 
     @Override
     public void onWalkRouteSearched(WalkRouteResult walkRouteResult, int errorCode) {
-        if (errorCode==1000){
-            if (walkRouteResult != null && walkRouteResult.getPaths() != null){
-                if (walkRouteResult.getPaths().size() > 0){
+        if (errorCode == 1000) {
+            if (walkRouteResult != null && walkRouteResult.getPaths() != null) {
+                if (walkRouteResult.getPaths().size() > 0) {
                     updateUiAfterRouted();
 
                     mWalkRouteResult = walkRouteResult;
-                    WalkPath path=mWalkRouteResult.getPaths().get(0);
-                    mWalkStepAdapter=new WalkStepAdapter(mContext,path.getSteps());
+                    WalkPath path = mWalkRouteResult.getPaths().get(0);
+                    mWalkStepAdapter = new WalkStepAdapter(mContext, path.getSteps());
                     mPathDetailRecView.setAdapter(mWalkStepAdapter);
                     mPathDetailRecView.setVisibility(View.VISIBLE);
-                    drawWalkRoutes(mWalkRouteResult,mWalkRouteResult.getPaths().get(0));
+                    drawWalkRoutes(mWalkRouteResult, mWalkRouteResult.getPaths().get(0));
 
-                    for (int i=0;i<mWalkRouteResult.getPaths().size();i++){
-                        updatePathGeneral(mWalkRouteResult.getPaths().get(i),i);
+                    for (int i = 0; i < mWalkRouteResult.getPaths().size(); i++) {
+                        updatePathGeneral(mWalkRouteResult.getPaths().get(i), i);
                     }
 
                     mBehavior.setPeekHeight(getSheetHeadHeight());
-                }else if (walkRouteResult != null && walkRouteResult.getPaths() == null) {
-                    Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+                } else if (walkRouteResult != null && walkRouteResult.getPaths() == null) {
+                    Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
                 }
-            }else {
-                Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
             }
-        }else {
-            Toast.makeText(mContext,R.string.poi_search_error,Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(mContext, R.string.poi_search_error, Toast.LENGTH_LONG).show();
         }
     }
 
     @Override
     public void onRideRouteSearched(RideRouteResult rideRouteResult, int errorCode) {
-        if (errorCode==1000){
-            if (rideRouteResult != null && rideRouteResult.getPaths() != null){
-                if (rideRouteResult.getPaths().size() > 0){
+        if (errorCode == 1000) {
+            if (rideRouteResult != null && rideRouteResult.getPaths() != null) {
+                if (rideRouteResult.getPaths().size() > 0) {
                     updateUiAfterRouted();
 
                     mRideRouteResult = rideRouteResult;
-                    RidePath path=mRideRouteResult.getPaths().get(0);
+                    RidePath path = mRideRouteResult.getPaths().get(0);
 
-                    mRideStepAdapter=new RideStepAdapter(mContext,path.getSteps());
+                    mRideStepAdapter = new RideStepAdapter(mContext, path.getSteps());
                     mPathDetailRecView.setVisibility(View.VISIBLE);
-                    drawRideRoutes(mRideRouteResult,mRideRouteResult.getPaths().get(0));
+                    drawRideRoutes(mRideRouteResult, mRideRouteResult.getPaths().get(0));
 
-                    for (int i=0;i<mRideRouteResult.getPaths().size();i++){
-                        updatePathGeneral(mRideRouteResult.getPaths().get(i),i);
+                    for (int i = 0; i < mRideRouteResult.getPaths().size(); i++) {
+                        updatePathGeneral(mRideRouteResult.getPaths().get(i), i);
                     }
 
                     mBehavior.setPeekHeight(getSheetHeadHeight());
-                }else if (rideRouteResult != null && rideRouteResult.getPaths() == null) {
-                    Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+                } else if (rideRouteResult != null && rideRouteResult.getPaths() == null) {
+                    Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
                 }
-            }else {
-                Toast.makeText(mContext,R.string.no_result,Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(mContext, R.string.no_result, Toast.LENGTH_LONG).show();
             }
-        }else {
-            Toast.makeText(mContext,R.string.poi_search_error,Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(mContext, R.string.poi_search_error, Toast.LENGTH_LONG).show();
         }
     }
 
-    private void updateUiAfterRouted(){
-        if (mTopLayout.getVisibility()!=View.VISIBLE){
+    private void updateUiAfterRouted() {
+        if (mTopLayout.getVisibility() != View.VISIBLE) {
             mFloatBtn.hide();
             ViewAnimUtils.dropDownWithInterpolator(mTopLayout, new ViewAnimUtils.AnimEndListener() {
                 @Override
@@ -913,7 +1003,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                 }
             });
         }
-        if (mBusResultRview.getVisibility()==View.VISIBLE){
+        if (mBusResultRview.getVisibility() == View.VISIBLE) {
             ViewAnimUtils.popupoutWithInterpolator(mBusResultRview, new ViewAnimUtils.AnimEndListener() {
                 @Override
                 public void onAnimEnd() {
@@ -929,64 +1019,63 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
 
-
-    private void drawDriveRoutes(DriveRouteResult driveRouteResult, DrivePath path){
+    private void drawDriveRoutes(DriveRouteResult driveRouteResult, DrivePath path) {
         mAmap.clear();
         final DrivingRouteOverlay drivingRouteOverlay = new DrivingRouteOverlay(
                 mContext, mAmap, path,
-                driveRouteResult.getStartPos(),driveRouteResult.getTargetPos(),
+                driveRouteResult.getStartPos(), driveRouteResult.getTargetPos(),
                 null);
         drivingRouteOverlay.setNodeIconVisibility(false);//设置节点marker是否显示
         drivingRouteOverlay.setIsColorfulline(true);//是否用颜色展示交通拥堵情况，默认true
         drivingRouteOverlay.removeFromMap();
         drivingRouteOverlay.addToMap();
-        drivingRouteOverlay.zoomWithPadding(getTopLayoutHeight(),getSheetHeadHeight());
+        drivingRouteOverlay.zoomWithPadding(getTopLayoutHeight(), getSheetHeadHeight());
     }
 
-    private void drawBusRoutes(BusRouteResult busRouteResult, BusPath path){
+    private void drawBusRoutes(BusRouteResult busRouteResult, BusPath path) {
         mAmap.clear();
         BusRouteOverlay busRouteOverlay = new BusRouteOverlay(
-                mContext, mAmap,path,busRouteResult.getStartPos(),
+                mContext, mAmap, path, busRouteResult.getStartPos(),
                 busRouteResult.getTargetPos());
         busRouteOverlay.setNodeIconVisibility(true);//设置节点marker是否显示
         busRouteOverlay.removeFromMap();
         busRouteOverlay.addToMap();
-        busRouteOverlay.zoomWithPadding(getTopLayoutHeight(),getSheetHeadHeight());
+        busRouteOverlay.zoomWithPadding(getTopLayoutHeight(), getSheetHeadHeight());
     }
 
-    private void drawWalkRoutes(WalkRouteResult walkRouteResult, WalkPath path){
+    private void drawWalkRoutes(WalkRouteResult walkRouteResult, WalkPath path) {
         mAmap.clear();
         WalkRouteOverlay walkRouteOverlay = new WalkRouteOverlay(
-                mContext, mAmap,path,walkRouteResult.getStartPos(),
+                mContext, mAmap, path, walkRouteResult.getStartPos(),
                 walkRouteResult.getTargetPos());
         walkRouteOverlay.setNodeIconVisibility(true);//设置节点marker是否显示
         walkRouteOverlay.removeFromMap();
         walkRouteOverlay.addToMap();
-        walkRouteOverlay.zoomWithPadding(getTopLayoutHeight(),getSheetHeadHeight());
+        walkRouteOverlay.zoomWithPadding(getTopLayoutHeight(), getSheetHeadHeight());
     }
 
 
-    private void drawRideRoutes(RideRouteResult rideRouteResult, RidePath path){
+    private void drawRideRoutes(RideRouteResult rideRouteResult, RidePath path) {
         mAmap.clear();
         RideRouteOverlay rideRouteOverlay = new RideRouteOverlay(
-                mContext, mAmap,path,rideRouteResult.getStartPos(),
+                mContext, mAmap, path, rideRouteResult.getStartPos(),
                 rideRouteResult.getTargetPos());
         rideRouteOverlay.setNodeIconVisibility(true);//设置节点marker是否显示
         rideRouteOverlay.removeFromMap();
         rideRouteOverlay.addToMap();
-        rideRouteOverlay.zoomWithPadding(getTopLayoutHeight(),getSheetHeadHeight());
+        rideRouteOverlay.zoomWithPadding(getTopLayoutHeight(), getSheetHeadHeight());
     }
 
 
     @Override
     public void onItemClick(BusPath busPath) {
-        drawBusRoutes(mBusRouteResult,busPath);
+        drawBusRoutes(mBusRouteResult, busPath);
     }
 
 
     @Override
     public void onBackPressed() {
-        if (mTopLayout.getVisibility()==View.VISIBLE){
+        if (mTopLayout.getVisibility() == View.VISIBLE) {
             ViewAnimUtils.pushOutWithInterpolator(mTopLayout, new ViewAnimUtils.AnimEndListener() {
                 @Override
                 public void onAnimEnd() {
@@ -999,7 +1088,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                     mFloatBtn.hide();
                 }
             });
-            if (mBusResultRview.getVisibility()==View.VISIBLE){
+            if (mBusResultRview.getVisibility() == View.VISIBLE) {
                 ViewAnimUtils.popupoutWithInterpolator(mBusResultRview, new ViewAnimUtils.AnimEndListener() {
                     @Override
                     public void onAnimEnd() {
@@ -1019,12 +1108,14 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
         mMapView.onDestroy();
         mSensorManager.unregisterListener(mSensorListner);
     }
+
     @Override
     protected void onResume() {
         super.onResume();
         //在activity执行onResume时执行mMapView.onResume ()，重新绘制加载地图
         mMapView.onResume();
     }
+
     @Override
     protected void onPause() {
         super.onPause();
@@ -1040,30 +1131,66 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     }
 
     //请求必要权限
-    private void checkPermission(){
-        List<String> permissionList=new ArrayList<>();
-        if(ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
-                WRITE_EXTERNAL_STORAGE)!= PackageManager.PERMISSION_GRANTED){
+    private void checkPermission() {
+        List<String> permissionList = new ArrayList<>();
+        if (ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
+                WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             permissionList.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         }
-        if(ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
-                READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED){
+        if (ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
+                READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
             permissionList.add(Manifest.permission.READ_PHONE_STATE);
         }
-        if(ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
-                ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+        if (ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
+                ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissionList.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
-        if(ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
-                RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+        if (ContextCompat.checkSelfPermission(RoutePlanActivity.this, Manifest.permission.
+                RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             permissionList.add(Manifest.permission.RECORD_AUDIO);
         }
-        if(!permissionList.isEmpty()){
-            String[] permissions=permissionList.toArray(new String[permissionList.size()]);
+        if (!permissionList.isEmpty()) {
+            String[] permissions = permissionList.toArray(new String[permissionList.size()]);
             ActivityCompat.requestPermissions(RoutePlanActivity.this, permissions, 1);
         }
 //        else {
 //            init();
 //        }
     }
+
+
+    /**
+     * 创建ChatClient对象，用于连接服务器
+     */
+    public void connect() {
+        try {
+            // 创建一个ChatClient实例
+            nettyClient = new NettyClient(host, port);
+            // 开始尝试连接服务器
+            nettyClient.start();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    /**
+     * 断开与netty服务器的连接
+     */
+    public void stop() {
+        nettyClient.stop();
+    }
+
+
+    /**
+     * 发送消息
+     *
+     * @param
+     */
+    public void send(String str) {
+        Log.e(TAG, "send: " + str);
+        nettyClient.sendMsg(str);
+    }
+
+
 }

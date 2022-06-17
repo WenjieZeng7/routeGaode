@@ -19,6 +19,7 @@ import android.widget.Toast;
 import com.alibaba.fastjson.JSON;
 import com.amap.api.location.AMapLocationClient;
 import com.orange.amaplike.po.User;
+import com.orange.amaplike.utils.Constants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -79,7 +80,7 @@ public class MainActivity extends AppCompatActivity implements  View.OnClickList
                             try{
                                 String json = JSON.toJSONString(user); //使用阿里的fastJson库
                                 OkHttpClient client = new OkHttpClient(); //创建http客户端
-                                Request request = new Request.Builder().url("http://10.116.88.215:9090/login")
+                                Request request = new Request.Builder().url("http://"+ Constants.SEARCH_IP +":9090/login")
                                         .post(RequestBody.create(MediaType.parse("application/json"),json)).build(); //创造http请求
                                 Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
                                 final String isSuccee = response.body().string();
@@ -89,7 +90,9 @@ public class MainActivity extends AppCompatActivity implements  View.OnClickList
                                     @Override
                                     public void run() {
                                         if("1".equals(isSuccee)){
+                                            MyApplication.user = user;
                                             Toast.makeText(MainActivity.this,"登录成功",Toast.LENGTH_SHORT).show();
+                                            Intent intent = new Intent(MainActivity.this,RoutePlanActivity.class);
                                             startActivity(new Intent(MainActivity.this, RoutePlanActivity.class));
                                         }else{
                                             Toast.makeText(MainActivity.this,"密码错误，请重试",Toast.LENGTH_SHORT).show();

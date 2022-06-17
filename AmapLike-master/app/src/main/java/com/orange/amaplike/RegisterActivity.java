@@ -13,6 +13,7 @@ import android.widget.Toast;
 
 import com.alibaba.fastjson.JSON;
 import com.orange.amaplike.po.User;
+import com.orange.amaplike.utils.Constants;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -67,7 +68,7 @@ public class RegisterActivity extends AppCompatActivity implements  View.OnClick
                                 try{
                                     String json = JSON.toJSONString(user); //使用阿里的fastJson库
                                     OkHttpClient client = new OkHttpClient(); //创建http客户端
-                                    Request request = new Request.Builder().url("http://10.116.88.215:9090/register")
+                                    Request request = new Request.Builder().url("http://"+ Constants.SEARCH_IP  +":9090/register")
                                             .post(RequestBody.create(MediaType.parse("application/json"),json)).build(); //创造http请求
                                     Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
                                     final String isSuccee = response.body().string();
