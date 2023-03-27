@@ -28,7 +28,7 @@ public class RegisterActivity extends AppCompatActivity implements  View.OnClick
     private EditText etAccount;
     private EditText etPassword;
     private EditText etPassword2;
-    private User user = new User();
+    private     User user = new User();
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {

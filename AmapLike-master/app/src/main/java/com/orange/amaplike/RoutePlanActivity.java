@@ -2,6 +2,7 @@ package com.orange.amaplike;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -77,6 +78,7 @@ import com.orange.amaplike.pickpoi.PoiItemEvent;
 import com.orange.amaplike.pickpoi.PoiSearchActivity;
 import com.orange.amaplike.pickpoi.SelectedMyPoiEvent;
 import com.orange.amaplike.po.LatLong;
+import com.orange.amaplike.po.Position;
 import com.orange.amaplike.po.UserDrivePath;
 import com.orange.amaplike.utils.Constants;
 import com.orange.amaplike.utils.ViewAnimUtils;
@@ -112,7 +114,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
     private final int HISTORY_SIZE = 10;
     private DrivePath path; //统一用于路径规划信息上传
 
-    private List<LatLong> latLngs; // 用于距离服务
+    private List<Position> latLngs; // 用于距离服务
     private int distance =0; // 用于距离服务
     private int preDistance = 0; // 用于距离服务，判断数据点选择
     private int overCount = 0; // 用于距离服务，记录distance > preDistance的次数
@@ -179,21 +181,34 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                                     String[] split1 = split[3].split(",");
                                     preDistance = distance; // 正常来说，distance会越来越小。但如 过了第一个数据点，distance就越来越大。再设置一个大了2次的阈值，就可以判断要选下一个数据点了。
                                     distance = Integer.valueOf(split1[0].substring(12, split1[0].length() - 1));
-                                    if(distance - preDistance > 15){
+                                    if(distance - preDistance > 3){
                                         if(overCount ++ > 3 && index < latLngs.size() - 1){
                                             index ++;
                                             Log.d(TAG,"开始匹配下一个数据点:" + index);
+//                                            Toast.makeText(RoutePlanActivity.this,"开始匹配下一个数据点:" + index,Toast.LENGTH_SHORT).show();
+//                                            runOnUiThread(new Runnable() {
+//                                                @Override
+//                                                public void run() {
+//                                                    Toast.makeText(RoutePlanActivity.this,"开始匹配下一个数据点:" + index,Toast.LENGTH_SHORT).show();
+//                                                }
+//                                            });
                                         }
                                     }
                                     Log.d(TAG,"距第"+index + "个数据点" + distance);
+//                                    Toast.makeText(RoutePlanActivity.this,"距第"+index + "个数据点" + distance,Toast.LENGTH_SHORT).show();
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            Toast.makeText(RoutePlanActivity.this,"距第"+index + "个数据点" + distance+ "米",Toast.LENGTH_SHORT).show();
+                                        }
+                                    });
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
                             }
                         }).start();
                     }
-                },0,5000);
-
+                },0,4000);
             }
         }
     };
@@ -772,7 +787,7 @@ public class RoutePlanActivity extends AppCompatActivity implements RouteSearch.
                                     .post(RequestBody.create(MediaType.parse("application/json"), json)).build(); //创造http请求
                             Response response = client.newCall(request).execute(); //执行发送的指令，并接收返回
                             String str = response.body().string();
-                            latLngs = JSON.parseArray(str, LatLong.class);
+                            latLngs = JSON.parseArray(str, Position.class);
                             Log.d(TAG,"获取到的当前路径数据点"+ latLngs.toString());
                             //操作成功，弹窗提示
                             runOnUiThread(new Runnable() {
